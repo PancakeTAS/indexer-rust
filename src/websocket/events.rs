@@ -16,7 +16,6 @@ pub enum Commit {
     },
     #[serde(rename = "update")]
     Update {
-        // fields are speculated, not documented:
         rev: String,
         collection: String,
         rkey: RecordKey,
@@ -73,27 +72,8 @@ pub enum Kind {
     },
 }
 
-///
 /// Parse an event from a string
-///
-/// # Arguments
-///
-/// * `msg` - The string to parse
-///
-/// # Returns
-///
-/// The parsed event
-///
-/// # Errors
-///
-/// If the event could not be parsed
-///
-/// # Safety
-///
-/// This function is unsafe because it uses `simd-json` to parse the event
-///
-pub fn parse_event(mut msg: String) -> Result<Kind, anyhow::Error> {
-    let event: Kind = unsafe { simd_json::from_str(msg.as_mut_str()) }
-        .context("failed to parse event")?;
-    Ok(event)
+pub fn parse_event(mut msg: String) -> anyhow::Result<Kind> {
+    Ok(unsafe { simd_json::from_str(msg.as_mut_str()) }
+        .context("Failed to parse event")?)
 }

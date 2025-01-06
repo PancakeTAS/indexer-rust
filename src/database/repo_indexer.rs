@@ -1,4 +1,5 @@
 use crate::database::{handlers::on_commit_event_createorupdate, utils::unsafe_user_key_to_did};
+use anyhow::Context;
 use atrium_api::{
     record::KnownRecord,
     types::string::{Did, RecordKey},
@@ -215,7 +216,8 @@ async fn index_repo(state: &SharedState, did: &String) -> anyhow::Result<()> {
                                 Did::new(did.clone()).unwrap(),
                                 did_key.clone(),
                                 parts.next().unwrap().to_string(),
-                                RecordKey::new(parts.next().unwrap().to_string()).unwrap(),
+                                RecordKey::new(parts.next().unwrap().to_string())
+                                .ok().context("meow")?,
                                 record,
                             )
                             .await;

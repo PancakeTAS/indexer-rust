@@ -9,27 +9,31 @@ use iroh_car::CarReader;
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
-use tokio::runtime::Builder;
+use tokio::sync::{RwLock, Semaphore};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, OnceLock}
 };
 use surrealdb::{engine::any::Any, Surreal};
 
+static state_static: OnceLock<SharedState> = OnceLock::new();
+
 pub async fn start_full_repo_indexer(db: Surreal<Any>, max_tasks: usize) -> anyhow::Result<()> {
     let mut processed_dids: BTreeSet<String> = BTreeSet::new();
-    let state = Arc::new(SharedState {
-        db,
-        http_client: Client::new(),
-        http_semaphore: Semaphore::new(10000),
+    state_static.get_or_init(|| {
+        SharedState {
+            db,
+            http_client: Client::new(),
+            http_semaphore: Semaphore::new(10000),
+        }
     });
+    let state = state_static.get().unwrap();
 
     info!(target: "indexer", "Spinning up {} async handlers", max_tasks);
 
     let mut anchor = "3juj4".to_string();
     loop {
-        info!(target: "repo_indexer", "anchor {}", anchor);
+        info!(target: "repo_indexelet state = state.clone();r", "anchor {}", anchor);
 
         let mut res = state
             .db
@@ -60,9 +64,17 @@ pub async fn start_full_repo_indexer(db: Surreal<Any>, max_tasks: usize) -> anyh
         }
 
         for did in dids {
-            let state = state.clone();
+            {
+                let did_key = crate::database::utils::did_to_key(did.as_str())?;
+                let li: Option<LastIndexedTimestamp> = state.db.select(("li_did", &did_key)).await?;
+                if li.is_some() {
+                    // debug!("skip {}", did);
+                    continue;
+                }
+            }
+            let did = did.clone();
             tokio::spawn(async move {
-                let res = task_handler(state, did).await;
+                let res = task_handler(did).await;
                 if let Err(e) = res {
                     error!(target: "indexer", "Handler task failed: {:?}", e);
                 } else {
@@ -95,8 +107,9 @@ struct SharedState {
     http_semaphore: Semaphore,
 }
 
-async fn task_handler(state: Arc<SharedState>, did: String) -> anyhow::Result<()> {
-    let res = index_repo(&state, &did).await;
+async fn task_handler(did: String) -> anyhow::Result<()> {
+    let state = state_static.get().unwrap();
+    let res = index_repo(state, &did).await;
     if let Err(e) = res {
         let e_str = format!("{}", e);
         if e_str == "Failed to parse CAR file: early eof" {
@@ -125,16 +138,10 @@ async fn task_handler(state: Arc<SharedState>, did: String) -> anyhow::Result<()
     Ok(())
 }
 
-async fn index_repo(state: &Arc<SharedState>, did: &String) -> anyhow::Result<()> {
+async fn index_repo(state: &SharedState, did: &String) -> anyhow::Result<()> {
     let did_key = crate::database::utils::did_to_key(did.as_str())?;
 
-    {
-        let li: Option<LastIndexedTimestamp> = state.db.select(("li_did", &did_key)).await?;
-        if li.is_some() {
-            // debug!("skip {}", did);
-            return Ok(());
-        }
-    }
+ 
 
     let timestamp_us = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use definitions::{JetstreamCursor, Record};
-use log::{debug, info};
-use surrealdb::{engine::any::Any, opt::auth::Root, RecordId, Surreal};
+use log::info;
+use surrealdb::{engine::any::Any, RecordId, Surreal};
 
 pub mod definitions;
 pub mod handlers;
@@ -11,8 +11,6 @@ mod utils;
 /// Connect to the database
 pub async fn connect(
     db_endpoint: String,
-    username: &str,
-    password: &str,
 ) -> anyhow::Result<Surreal<Any>> {
     // connect to the database
     info!(target: "indexer", "Connecting to the database at {}", db_endpoint);

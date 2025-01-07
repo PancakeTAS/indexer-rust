@@ -10,32 +10,31 @@ use iroh_car::CarReader;
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::Semaphore;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, OnceLock}
+    sync::OnceLock
 };
 use surrealdb::{engine::any::Any, Surreal};
 
-static state_static: OnceLock<SharedState> = OnceLock::new();
+static STATE: OnceLock<SharedState> = OnceLock::new();
 
-pub async fn start_full_repo_indexer(db: Surreal<Any>, max_tasks: usize) -> anyhow::Result<()> {
-    let mut processed_dids: BTreeSet<String> = BTreeSet::new();
-    state_static.get_or_init(|| {
+pub async fn start_full_repo_indexer(db: Surreal<Any>, max_concurrent_requests: usize) -> anyhow::Result<()> {
+
+    STATE.get_or_init(|| {
         SharedState {
             db,
             http_client: Client::new(),
-            http_semaphore: Semaphore::new(10000),
+            http_semaphore: Semaphore::new(max_concurrent_requests),
         }
     });
-    let state = state_static.get().unwrap();
+    let state = STATE.get().unwrap();
 
-    info!(target: "indexer", "Spinning up {} async handlers", max_tasks);
+    info!(target: "indexer", "Starting full repo indexer with at most {} concurrent requests", max_concurrent_requests);
 
     let mut anchor = "3juj4".to_string();
+    let mut processed_dids: BTreeSet<String> = BTreeSet::new();
     loop {
-        info!(target: "repo_indexelet state = state.clone();r", "anchor {}", anchor);
-
         let mut res = state
             .db
             .query(format!(
@@ -65,15 +64,6 @@ pub async fn start_full_repo_indexer(db: Surreal<Any>, max_tasks: usize) -> anyh
         }
 
         for did in dids {
-            {
-                let did_key = crate::database::utils::did_to_key(did.as_str())?;
-                let li: Option<LastIndexedTimestamp> = state.db.select(("li_did", &did_key)).await?;
-                if li.is_some() {
-                    // debug!("skip {}", did);
-                    continue;
-                }
-            }
-            let did = did.clone();
             tokio::spawn(async move {
                 let res = task_handler(did).await;
                 if let Err(e) = res {
@@ -82,10 +72,10 @@ pub async fn start_full_repo_indexer(db: Surreal<Any>, max_tasks: usize) -> anyh
                     debug!(target: "indexer", "Handler task exited");
                 }
             });
-            // TODO: limit max and wait
         }
 
         while state.http_semaphore.available_permits() < 50 {
+            info!(target: "indexer", "Stalling for permits!");
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
@@ -109,7 +99,7 @@ struct SharedState {
 }
 
 async fn task_handler(did: String) -> anyhow::Result<()> {
-    let state = state_static.get().unwrap();
+    let state = STATE.get().unwrap();
     let res = index_repo(state, &did).await;
     if let Err(e) = res {
         let e_str = format!("{}", e);
@@ -141,14 +131,17 @@ async fn task_handler(did: String) -> anyhow::Result<()> {
 
 async fn index_repo(state: &SharedState, did: &String) -> anyhow::Result<()> {
     let did_key = crate::database::utils::did_to_key(did.as_str())?;
-
- 
-
+    let li: Option<LastIndexedTimestamp> = state.db.select(("li_did", &did_key)).await?;
+    if li.is_some() {
+        // debug!("skip {}", did);
+        return Ok(())
+    }
     let timestamp_us = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_micros();
 
+    let _permit = state.http_semaphore.acquire().await.unwrap();
     let resp = state
         .http_client
         .get(format!("https://plc.directory/{}", did))
@@ -158,7 +151,6 @@ async fn index_repo(state: &SharedState, did: &String) -> anyhow::Result<()> {
         .await?;
 
     if let Some(service) = resp.service.first() {
-        let _permit = state.http_semaphore.acquire().await.unwrap();
 
         let files: Vec<(ipld_core::cid::Cid, Vec<u8>)> = {
             let custom_client = Client::new();
@@ -217,7 +209,7 @@ async fn index_repo(state: &SharedState, did: &String) -> anyhow::Result<()> {
                                 did_key.clone(),
                                 parts.next().unwrap().to_string(),
                                 RecordKey::new(parts.next().unwrap().to_string())
-                                .ok().context("meow")?,
+                                    .ok().context("meow")?,
                                 record,
                             )
                             .await;

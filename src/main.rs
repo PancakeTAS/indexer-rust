@@ -68,7 +68,7 @@ fn main() {
 /// Asynchronous main function
 async fn application_main(args: Args) -> anyhow::Result<()> {
     // connect to the database
-    let db = database::connect(args.db, &args.username, &args.password)
+    let db = database::connect(args.db)
         .await
         .context("Failed to connect to the database")?;
 
@@ -122,7 +122,7 @@ async fn application_main(args: Args) -> anyhow::Result<()> {
     });
 
     if args.mode == "full" {
-        start_full_repo_indexer(db, args.max_tasks.unwrap_or(num_cpus::get() * 50)).await?;
+        start_full_repo_indexer(db, args.max_concurrent_requests.unwrap_or(num_cpus::get() * 50)).await?;
     }
 
     loop {

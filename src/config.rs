@@ -12,18 +12,12 @@ pub struct Args {
     /// Override tokio threadpool size for async operations
     #[arg(long)]
     pub worker_threads: Option<usize>,
-    /// Override parallel task count for full repo index operations
+    /// Override amount of concurrent requests the full indexer may handle
     #[arg(long)]
-    pub max_tasks: Option<usize>,
+    pub max_concurrent_requests: Option<usize>,
     /// Endpoint of the database server (including port and protocol)
     #[arg(short = 'D', long, default_value = "rocksdb://path/to/surreal.db")]
     pub db: String,
-    /// Username for the database server
-    #[arg(short, long, default_value = "root")]
-    pub username: String,
-    /// Password for the database server
-    #[arg(short, long, default_value = "root")]
-    pub password: String,
     /// Debug verbosity level
     #[arg(short, action = ArgAction::Count)]
     pub verbosity: u8,
@@ -48,17 +42,19 @@ impl Args {
         );
         info!(
             "{}: {}",
-            "Max tasks".cyan(),
-            self.max_tasks.map_or_else(
-                || "Not set, using CPU count times 32".yellow(),
+            "Max concurrent requests".cyan(),
+            self.max_concurrent_requests.map_or_else(
+                || "Not set, using CPU count times 1000".yellow(),
                 |v| v.to_string().green()
             )
         );
+        info!("{}: {}", "Database".cyan(), self.db.green());
         info!(
             "{}: {}",
             "Verbosity Level".cyan(),
             self.log_level().to_string().green()
         );
+        info!("{}: {}", "Mode".cyan(), self.mode.green());
     }
 
     /// Verbosity to log level
